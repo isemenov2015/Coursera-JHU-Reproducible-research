@@ -1,0 +1,373 @@
+---
+title: "Impact of severe weather events on US population and economy"
+author: "Ilya Semenov"
+date: "March 7, 2016"
+output: html_document
+---
+
+###Synopsis
+This is a course project for Coursera/John Hopkins University Reproducible research course. Research based on a storm database provided by U.S. National Oceanic and Atmospheric Administration (NOAA). Main focus of  research is the impact of weather events on US population and economy. Based on a data provided by NOAA since 01.03.1950 one can claim that most dangerous for US population weather event is __tornado__ whereas most economically harmful events are __floods__ and __hurricanes__.
+
+###Data source for analysis
+[Source data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) for analysis were provided by John Hopkins course staff. Following NOAA documentation was also used:  
+
+- National weather service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+##Data loading and preprocessing
+Code for loading data frame in R is as follows.
+```{r}
+getsets <- function(furl = '') {
+    # downloads .zip file from location specified in furl,
+    # unzips data and removes downloaded archive from disk
+    library(downloader)
+    zipfile <- 'StormData.csv.bz2'
+    download(fileurl, dest = zipfile, mode = 'wb')
+    #unzip(zipfile)
+    #unlink(zipfile)
+}
+fileurl <- 'https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2'
+if (!file.exists('StormData.csv.bz2')) {
+    getsets(fileurl)
+}
+
+df <- read.csv('StormData.csv.bz2', stringsAsFactors = FALSE, na = 'NA')
+colnames(df)
+```
+
+We'll drop columns unnecessary for analysis to save memory and speed up processing.
+
+```{r}
+subdf <- df[,c("EVTYPE","BGN_DATE", "STATE", "FATALITIES","INJURIES","PROPDMG","PROPDMGEXP","CROPDMG","CROPDMGEXP")]
+rm(df)
+```
+
+Next we'll convert events dates to R date format.
+
+```{r}
+dates <- as.Date(subdf$BGN_DATE, '%m/%d/%Y %H:%M:%S')
+subdf$BGN_DATE <- dates
+rm(dates)
+```
+
+Original data contain about a thousand different event types.
+```{r}
+length(unique(subdf$EVTYPE))
+```
+
+We need to process events definitions to best meet event types table from NOAA classificator (found at [Storm Data docs](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)).
+
+
+__Event Name__         | __Event Name__
+-----------------------|-------------------------
+Astronomical Low Tide  | Avalanche 
+Blizzard               | Coastal Flood
+Cold/Wind Chill        | Debris Flow
+Dense Fog              | Dense Smoke 
+Drought                | Dust Devil
+Dust Storm             | Excessive Heat
+Extreme Cold/Wind Chill| Flash Flood
+Flood                  | Frost/Freeze
+Funnel Cloud           | Freezing Fog
+Hail                   | Heat
+Heavy Rain             | Heavy Snow
+High Surf              | High Wind
+Hurricane (Typhoon)    | Ice Storm
+Lake-Effect Snow       | Lakeshore Flood
+Lightning              | Marine Hail
+Marine High Wind       | Marine Strong Wind
+Rip Current            | Marine Thunderstorm Wind
+Seiche                 | Sleet
+Storm Surge/Tide       | Strong Wind
+Thunderstorm Wind      | Tornado
+Tropical Depression    | Tropical Storm
+Tsunami                | Volcanic Ash
+Waterspout             | Wildfire
+Winter Storm           | Winter Weather
+
+
+Below is the code for events types tidying.
+```{r}
+subdf$EVTYPE <- tolower(subdf$EVTYPE)
+
+disasters <- c('Astronomical Low Tide', 'Avalanche', 'Blizzard', 'Coastal Flood', 'Cold', 
+               'Windhill', 'Debris Flow', 'Dense Fog', 'Dense Smoke', 'Drought', 'Dust Devil', 
+               'Dust Storm', 'Excessive Heat', 'Extremeold', 'Windhill', 'Flash Flood', 
+               'Flood', 'Frost', 'Freeze', 'Funnelloud', 'Freezing Fog', 'Hail', 'Heat', 
+               'Heavy Rain', 'Heavy Snow', 'High Surf', 'High Wind', 'Hurricane', 'Typhoon', 
+               'Ice Storm', 'Lake-Effect Snow', 'Lakeshore Flood', 'Lightning', 'Marine Hail',
+               'Marine High Wind', 'Marine Strong Wind', 'Marine Thunderstorm Wind', 
+               'Ripurrent', 'Seiche', 'Sleet', 'Storm Surge', 'Tide', 'Strong Wind', 
+               'Thunderstorm Wind', 'Tornado', 'Tropical Depression', 'Tropical Storm', 
+               'Tsunami', 'Volcanic Ash', 'Waterspout', 'Wildfire', 'Winter Storm', 
+               'Winter Weather')
+disasters <- tolower(disasters)
+
+for (disaster in disasters) {
+    regex <- paste('\\<',disaster, sep = '')
+    regex <- paste(regex,'\\>', sep = '')
+    ssub <- grepl(pattern = regex, subdf$EVTYPE)
+    #exclude marines
+    ssub <- ssub & !grepl(pattern = '[Mm]arine', subdf$EVTYPE)
+    #exclude excessive for 'heat'
+    ssub <- ssub & !grepl(pattern = '[Ee]xcessive', subdf$EVTYPE)
+    #exclude flash for 'flood'
+    ssub <- ssub & !grepl(pattern = '[Ff]lash', subdf$EVTYPE)
+    subdf$EVTYPE[ssub] <- disaster
+}
+
+# separate handling for tstm -> tsunami
+ssub <- grepl(pattern = 'tstm', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'tsunami'
+
+# separate handling for thun* -> thunderstorm wind, exclude marines
+ssub <- grepl(pattern = 'thun', subdf$EVTYPE)
+ssub <- ssub & !grepl(pattern = '[Mm]arine', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'thunderstorm wind'
+
+# separate handling for tunderst* -> thunderstorm winds, exclude marines
+ssub <- grepl(pattern = 'tunder', subdf$EVTYPE)
+ssub <- ssub & !grepl(pattern = '[Mm]arine', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'thunderstorm wind'
+
+# separate handling for torndao/tornados/tornadoes -> tornado
+ssub <- grepl(pattern = '(torndao|tornados|tornadoes)', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'tornado'
+
+# separate handling for duststorm -> dust storm
+ssub <- grepl(pattern = 'duststorm', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'dust storm'
+
+# separate handling for high winds -> high wind, exclude marines
+ssub <- grepl(pattern = 'high winds', subdf$EVTYPE)
+ssub <- ssub & !grepl(pattern = '[Mm]arine', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'high wind'
+
+# separate handling for record high -> excessive heat
+ssub <- grepl(pattern = 'record high', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'excessive heat'
+
+# separate handling for windchill -> wind chill
+ssub <- grepl(pattern = 'record high', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'excessive heat'
+
+# separate handling for shower -> heavy rain
+ssub <- grepl(pattern = 'shower', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heavy rain'
+
+# separate handling for hail* -> hail
+ssub <- grepl(pattern = 'hail', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'hail'
+
+# separate handling for heavy surf -> high surf
+ssub <- grepl(pattern = 'heavy surf', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'high surf'
+
+# separate handling for snowfall -> heavy snow
+ssub <- grepl(pattern = 'snowfall', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heavy snow'
+
+# separate handling for flash floo* -> flash flooding
+ssub <- grepl(pattern = 'flash floo', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'flash flood'
+
+# separate handling for *smoke* -> dense smoke
+ssub <- grepl(pattern = 'smoke', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'dense smoke'
+
+# separate handling for dry*|dri* -> drought
+ssub <- grepl(pattern = '(dry|dri)', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'drought'
+
+# separate handling for rainfall -> heavy rain
+regex <- paste('\\<', 'rainfall', sep = '')
+regex <- paste(regex,'\\>', sep = '')
+ssub <- grepl(pattern = regex, subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heavy rain'
+
+# separate handling for rain -> heavy rain
+regex <- paste('\\<', 'rain', sep = '')
+regex <- paste(regex,'\\>', sep = '')
+ssub <- grepl(pattern = regex, subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heavy rain'
+
+# separate handling for hot/warm -> heat
+regex <- paste('\\<', '(hot|warm)', sep = '')
+regex <- paste(regex,'\\>', sep = '')
+ssub <- grepl(pattern = regex, subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heat'
+
+# separate handling for snow -> heavy snow
+regex <- paste('\\<', 'snow', sep = '')
+regex <- paste(regex,'\\>', sep = '')
+ssub <- grepl(pattern = regex, subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'heavy snow'
+
+#assign typhoon to hurricane and then hurricane to 'hurricane (typhoon)'
+ssub <- grepl(pattern = 'typhoon', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'hurricane'
+ssub <- grepl(pattern = 'hurricane', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'hurricane (typhoon)'
+
+#assign tide to storm surge and then storm surge to 'storm surge/tide', exclude astronomical low tides
+ssub <- grepl(pattern = 'tide', subdf$EVTYPE)
+ssub <- ssub & !grepl(pattern = '[Aa]stronom', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'storm surge'
+ssub <- grepl(pattern = 'storm surge', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'storm surge/tide'
+
+#assign freeze to frost and then frost to 'frost/freeze'
+ssub <- grepl(pattern = 'freeze', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'frost'
+ssub <- grepl(pattern = 'frost', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'frost/freeze'
+
+#assign wind chill to cold and then cold to 'cold/wind chill'
+ssub <- grepl(pattern = 'wind chill', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'cold'
+ssub <- grepl(pattern = 'cold', subdf$EVTYPE)
+subdf$EVTYPE[ssub] <- 'cold/wind chill'
+
+
+disasters <- append(disasters, 
+                    c('cold/wind chill', 'frost/freeze', 
+                      'storm surge/tide', 'hurricane (typhoon)'))
+```
+
+Next we'll collapse the events descriptions that doesn't quite good match with NOAA approved event types to 'others'.
+
+```{r}
+ssub <- subdf$EVTYPE %in% disasters
+subdf$EVTYPE[!ssub] <- 'other'
+```
+
+Last check for the fact that our event description tidying is more or less correct:
+```{r}
+unique(subdf$EVTYPE)
+```
+
+##Weather events fatalities analysis
+First, let have a look on fatalities record.
+```{r}
+fatalities <- aggregate(subdf$FATALITIES, by = list(subdf$EVTYPE), FUN = sum)
+shrFatalities <- sum(fatalities$x) / 100
+fatalities$share <- fatalities$x / shrFatalities
+fatalities[order(-fatalities$x),][c(1:15),]
+```
+
+Tornado is a definite leader, but together with two different types of floods. 
+Despite of the fact that more than 5,5 thousand people reported dead from tornado, annual death tornado rate is less than one hundred people that is relatively small amount compared to 320 million US population.
+
+Next, let have a look on injuries.
+```{r}
+injuries <- aggregate(subdf$INJURIES, by = list(subdf$EVTYPE), FUN = sum)
+shrInjuries <- sum(injuries$x) / 100
+injuries$share <- injuries$x / shrInjuries
+injuries[order(-injuries$x),][c(1:15),]
+```
+
+This time tornadoes are outstanding, that is somewhat expectable in view of devastating nature of this type of an event. 
+Also one can note relatively low rate of tornado's dead/injured rate.
+Let combine together fatalities and injuries data and barplot them together.
+
+```{r}
+library(ggplot2)
+library(data.table)
+
+setnames(fatalities, old=c("x", "Group.1"), new=c("fatalities", "event_type"))
+setnames(injuries, old=c("x", "Group.1"), new=c("injuries", "event_type"))
+victims <- merge(fatalities, injuries, by="event_type")
+victims$total <- victims$fatalities + victims$injuries
+victimsTop <- victims[order(-victims$total),][c(1:10),]
+victimsTopMelt <- melt(victimsTop, id.vars=c("event_type"), 
+                       measure.vars=c("fatalities", "injuries"))
+
+ggplot(data=victimsTopMelt, 
+       aes(x=reorder(victimsTopMelt$event_type, -victimsTopMelt$value), 
+           y=victimsTopMelt$value, fill=variable)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=90)) +
+    ylab("Total victims") +
+    xlab("Event type") +
+    theme(text = element_text(size = 15)) +
+    ggtitle("Most harmful weather events in USA since 1950")
+```
+
+##Weather events economy losses analysis
+###Exponential numeric format processing
+Database contains two basic types of economy losses: properties damage and crops damage. Each losses type amount is split in two different columns: one for mantissa and one for exponent. Preprocessing task is to decrypt exponent column data.
+
+```{r}
+table(subdf$PROPDMGEXP)
+table(subdf$CROPDMGEXP)
+procexp <- function(x){
+    switch (tolower(x),
+            h = return(2),
+            k = return(3),
+            m = return(6),
+            b = return(9)
+    )
+    is.numeric <- suppressWarnings(!is.na(as.numeric(x)))
+    return(if (is.numeric) as.numeric(x) else 0)
+}
+subdf$propnumexp <- sapply(as.character(subdf$PROPDMGEXP), FUN = procexp)
+table(subdf$propnumexp)
+subdf$cropnumexp <- sapply(as.character(subdf$CROPDMGEXP), FUN = procexp)
+table(subdf$cropnumexp)
+```
+
+###Economy losses analysis
+Let take a look on properties damage.
+```{r}
+propdamage <- aggregate(subdf$PROPDMG * 10^subdf$propnumexp, 
+                        by = list(subdf$EVTYPE), FUN = sum)
+shrPropdamage <- sum(propdamage$x) / 100
+propdamage$share <- propdamage$x / shrPropdamage
+propdamage[order(-propdamage$x),][c(1:15),]
+```
+
+Floods are definite leaders, next are hurricanes and tornadoes.
+
+Now let look on crops damages.
+```{r}
+cropdamage <- aggregate(subdf$CROPDMG * 10^subdf$cropnumexp, 
+                        by = list(subdf$EVTYPE), FUN = sum)
+shrCropdamage <- sum(cropdamage$x) / 100
+cropdamage$share <- cropdamage$x / shrCropdamage
+cropdamage[order(-cropdamage$x),][c(1:15),]
+```
+
+Droughts have the most devastating effect on crops. Also one can note that crops damage is less than an order of magnitude lower than properties damage.
+
+Now let plot properties and crops damages together.
+```{r}
+setnames(propdamage, old=c("x", "Group.1"), new=c("properties", "event_type"))
+setnames(cropdamage, old=c("x", "Group.1"), new=c("crops", "event_type"))
+damages <- merge(propdamage, cropdamage, by="event_type")
+damages$total <- damages$properties + damages$crops
+damagesTop <- damages[order(-damages$total),][c(1:10),]
+damagesTopMelt <- melt(damagesTop, id.vars=c("event_type"), 
+                       measure.vars=c("properties", "crops"))
+
+ggplot(data=damagesTopMelt, 
+       aes(x=reorder(damagesTopMelt$event_type, -damagesTopMelt$value), 
+           y=damagesTopMelt$value / 10^9, fill=variable)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=90)) +
+    ylab("Total damage, $bln") +
+    xlab("Event type") +
+    theme(text = element_text(size = 15)) +
+    ggtitle("Losses from weather events in USA since 1950")
+```
+
+##Results
+####Population impact
+Tornadoes appear to be most harmful weather event for US public health according to NOAA database. They are responsible for more than 37% of total registered deaths from weather events and for more than 65% injuries. Average annual death rate from tornado is about 92 people a year.
+
+Total average death rate from weather events is about 250 people a year that is relatively low compared to, for example, annual death rate from airplane crashes in US that is slightly lower than 1000 people a year ([source](http://www.planecrashinfo.com/cause.htm)). So one must be aware of the dangerous weather events but should not overestimate the threat.
+
+####Economy impact
+Most dangerous weather events from losses for properties point of view are floods, hurricanes and tornadoes. They are responsible for almost 70% of total property losses from weather events. Annual loss rate for properties from those top 3 weather events is about $4,8 bln.
+
+Crops damage from weather events has less devastating effect. Most dangerous events from agricultural point of view are droughts, floods and hurricanes. Those top 3 are responsible for about 62% total crops losses. Annual economic loss for crops from those events is about $500 mln a year.
